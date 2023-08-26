@@ -15,20 +15,20 @@ namespace PurrfectIntelligence {
 
 	namespace Activation {
 
-		double Sigmoid(double x) {
+		inline double Sigmoid(double x) {
 			return x / (1 + abs(x));
 		}
 
-		double SigmoidD(double x) {
+		inline double SigmoidD(double x) {
 			double a = Sigmoid(x);
 			return a * (1 - a);
 		}
 
-		double ReLU(double x) {
+		inline double ReLU(double x) {
 			return ::std::max(0.0, x);
 		}
 
-		double ReLU(double x) {
+		inline double ReLUD(double x) {
 			return (x > 0) ? 1 : 0;
 		}
 
@@ -36,7 +36,7 @@ namespace PurrfectIntelligence {
 
 	namespace Cost {
 
-		double MeanSquareError(::std::vector<double> predictedOutputs, ::std::vector<double> expectedOutputs) {
+		inline double MeanSquareError(::std::vector<double> predictedOutputs, ::std::vector<double> expectedOutputs) {
 			double cost = 0;
 			for (int i = 0; i < predictedOutputs.size(); i++)
 			{
@@ -46,11 +46,16 @@ namespace PurrfectIntelligence {
 			return 0.5 * cost;
 		}
 
-		double MeanSquareErrorD(double predictedOutput, double expectedOutput) {
+		inline double MeanSquareErrorD(double predictedOutput, double expectedOutput) {
 			return predictedOutput - expectedOutput;
 		}
 
 	}
+
+	struct LayerArchitecture {
+		uint32_t neuronsIn;
+		uint32_t neuronsOut;
+	};
 
 	struct LayerLearnData {
 
@@ -59,23 +64,26 @@ namespace PurrfectIntelligence {
 		std::vector<double> activations;
 		std::vector<double> nodeValues;
 
-		LayerLearnData(Layer layer)
-			: weightedInputs(layer.GetArchitecture().neuronsOut), activations(layer.GetArchitecture().neuronsOut), nodeValues(layer.GetArchitecture().neuronsOut) {
+		LayerLearnData()
+			: inputs(), weightedInputs(), activations(), nodeValues() {
 		}
 
-	};
+		LayerLearnData(uint32_t neuronsIn, uint32_t neuronsOut)
+			: inputs(neuronsIn), weightedInputs(neuronsOut), activations(neuronsOut), nodeValues(neuronsOut) {
+		}
 
-	struct LayerArchitecture {
-		uint32_t neuronsIn;
-		uint32_t neuronsOut;
 	};
 
 	class Layer {
 
 	public:
 
+		Layer();
 		Layer(LayerArchitecture arch, ActivationFunc activation = Activation::Sigmoid, ActivationDerivativeFunc activationD = Activation::SigmoidD, CostFunc cost = Cost::MeanSquareError, CostDerivativeFunc costD = Cost::MeanSquareErrorD);
+		Layer(const Layer&) = delete;
 		~Layer();
+
+		Layer& operator=(const Layer&) = default;
 
 		inline void SetActivation(ActivationFunc func, ActivationDerivativeFunc derivative) { m_Activation = func; m_ActivationDerivative = derivative; }
 		
@@ -86,6 +94,8 @@ namespace PurrfectIntelligence {
 		void CalculateOutputLayerNodeValues(LayerLearnData &layerLearnData, std::vector<double> expectedOutputs, CostFunc cost);
 		void CalculateHiddenLayerNodeValues(LayerLearnData &layerLearnData, std::unique_ptr<Layer> &oldLayer, std::vector<double> oldNodeValues);
 		void UpdateGradients(LayerLearnData &layerLearnData);
+
+		std::vector<double> CalculateOutputs(std::vector<double> input);
 
 		inline LayerArchitecture GetArchitecture() { return m_Arch; }
 
@@ -110,11 +120,15 @@ namespace PurrfectIntelligence {
 
 	public:
 
+		Data();
 		Data(std::vector<double> value, uint32_t label, uint32_t labelCount);
 		~Data();
 
 		inline std::vector<double> GetData() { return m_Data; }
+		inline uint32_t GetLabel() { return m_Label; }
 		inline std::vector<double> GetExpectedOutputs() { return m_ExpectedOutputs; }
+
+		static std::vector<Data> LoadCsv(const char* filepath, uint32_t imageCount, uint32_t width, uint32_t height, uint32_t labelCount);
 
 	private:
 
@@ -131,10 +145,14 @@ namespace PurrfectIntelligence {
 
 		std::vector<LayerLearnData> layerData;
 
-		NetworkLearnData(std::vector<std::unique_ptr<Layer>> layers)
+		NetworkLearnData()
+			: layerData() {
+		}
+
+		NetworkLearnData(const std::vector<std::unique_ptr<Layer>> &layers)
 			: layerData(layers.size()) {
 			for (uint32_t i = 0; i < layers.size(); ++i)
-				layerData[i] = LayerLearnData(*layers[i].get());
+				layerData[i] = LayerLearnData(layers[i]->GetArchitecture().neuronsIn, layers[i]->GetArchitecture().neuronsOut);
 		}
 
 	};
@@ -143,18 +161,31 @@ namespace PurrfectIntelligence {
 		uint32_t inputLayerNeurons;
 		std::vector<uint32_t> hiddenLayersNeurons;
 		uint32_t outputLayerNeurons;
+
+		inline uint32_t operator[](uint32_t idx) {
+			// TODO(CatDev): Add
+			//assert(idx > 1 + hiddenLayersNeurons.size() && "");
+			if (idx == 0) return inputLayerNeurons;
+			else if (idx == hiddenLayersNeurons.size() + 1) return outputLayerNeurons;
+			return hiddenLayersNeurons[idx - 1];
+		}
 	};
 
 	class NeuralNetowrk {
 
 	public:
 
+		NeuralNetowrk();
 		NeuralNetowrk(NeuralNetworkArchitecture arch, ActivationFunc activation = Activation::Sigmoid, ActivationDerivativeFunc activationD = Activation::SigmoidD, CostFunc cost = Cost::MeanSquareError, CostDerivativeFunc costD = Cost::MeanSquareErrorD);
 		~NeuralNetowrk();
 
 		void Train(std::vector<Data> data, double learnRate, double regularization = 0, double momentum = 0);
 
+		std::pair<uint32_t, std::vector<double>> Classify(Data data);
+
 	private:
+
+		std::vector<double> CalculateOutputs(std::vector<double> input);
 
 		NeuralNetworkArchitecture m_Arch;
 		ActivationFunc m_Activation;

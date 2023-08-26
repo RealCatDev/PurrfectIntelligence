@@ -5,16 +5,22 @@
 #define _USE_MATH_DEFINES
 #include <math.h>
 
+#include <algorithm>
 #include <execution>
+
+#include <random>
 
 namespace PurrfectIntelligence {
 
 	double NormalDistribution(double mean, double standardDeviation) {
-		double x1 = 1 - std::rand();
-		double x2 = 1 - std::rand();
+		std::random_device rd;
+		std::mt19937 gen(rd());
+		std::normal_distribution<double> distribution(mean, standardDeviation);
+		return distribution(gen);
+	}
 
-		double y1 = sqrt(-2.0 * log(x1)) * cos(2.0 * M_PI * x2);
-		return y1 * standardDeviation + mean;
+	Layer::Layer()
+		: m_Arch(), m_Activation(), m_ActivationDerivative(), m_Cost(), m_CostDerivative(), m_Weights(), m_Biases(), m_CostGradientW(), m_CostGradientB(), m_WeightVelocities(), m_BiasVelocities() {
 	}
 
 	Layer::Layer(LayerArchitecture arch, ActivationFunc activation, ActivationDerivativeFunc activationD, CostFunc cost, CostDerivativeFunc costD)
@@ -28,9 +34,9 @@ namespace PurrfectIntelligence {
 	}
 
 	std::vector<double> Layer::Forward(std::vector<double> inputs) {
-		std::vector<double> activations;
+		std::vector<double> activations(m_Arch.neuronsOut);
 
-		for (uint32_t i = 0; i < m_Weights.size(); ++i) {
+		for (uint32_t i = 0; i < m_Arch.neuronsOut; ++i) {
 			double weightedSum = m_Biases[i];
 			for (int j = 0; j < m_Weights[i]; ++j) {
 				weightedSum += m_Weights[i * m_Arch.neuronsIn + j] * inputs[j];
@@ -44,9 +50,9 @@ namespace PurrfectIntelligence {
 	std::vector<double> Layer::Forward(std::vector<double> inputs, LayerLearnData &learnData) {
 		learnData.inputs = inputs;
 
-		for (uint32_t i = 0; i < m_Weights.size(); ++i) {
+		for (uint32_t i = 0; i < m_Arch.neuronsOut; ++i) {
 			double weightedSum = m_Biases[i];
-			for (int j = 0; j < m_Weights[i]; ++j) {
+			for (int j = 0; j < m_Arch.neuronsIn; ++j) {
 				weightedSum += m_Weights[i * m_Arch.neuronsIn + j] * inputs[j];
 			}
 			learnData.weightedInputs[i] = weightedSum;
@@ -100,7 +106,7 @@ namespace PurrfectIntelligence {
 			for (int oldNodeIndex = 0; oldNodeIndex < oldNodeValues.size(); oldNodeIndex++)
 			{
 				// Partial derivative of the weighted input with respect to the input
-				double weightedInputDerivative = oldLayer->m_Weights[newNodeIndex * oldLayer->m_Arch.neuronsIn + oldNodeIndex];
+				double weightedInputDerivative = oldLayer->m_Weights[oldNodeIndex * oldLayer->m_Arch.neuronsIn + newNodeIndex];
 				newNodeValue += weightedInputDerivative * oldNodeValues[oldNodeIndex];
 			}
 			newNodeValue *= m_ActivationDerivative(layerLearnData.weightedInputs[newNodeIndex]);
@@ -138,6 +144,34 @@ namespace PurrfectIntelligence {
 		bias.join();
 	}
 
+	std::vector<double> Layer::CalculateOutputs(std::vector<double> input) {
+		std::vector<double> weightedInputs(m_Arch.neuronsOut);
+
+		for (int nodeOut = 0; nodeOut < m_Arch.neuronsOut; nodeOut++)
+		{
+			double weightedInput = m_Biases[nodeOut];
+
+			for (int nodeIn = 0; nodeIn < m_Arch.neuronsIn; nodeIn++)
+			{
+				weightedInput += input[nodeIn] * m_Weights[nodeOut * m_Arch.neuronsIn + nodeIn];
+			}
+			weightedInputs[nodeOut] = weightedInput;
+		}
+
+		// Apply activation function
+		std::vector<double> activations(m_Arch.neuronsOut);
+		for (int outputNode = 0; outputNode < m_Arch.neuronsOut; outputNode++)
+		{
+			activations[outputNode] = m_Activation(weightedInputs[outputNode]);
+		}
+
+		return activations;
+	}
+
+	Data::Data()
+		: m_Data(), m_Label(), m_ExpectedOutputs() {
+	}
+
 	Data::Data(std::vector<double> data, uint32_t label, uint32_t labelCount)
 		: m_Data(data), m_Label(label), m_ExpectedOutputs(CreateOneHot(label, labelCount)) {
 	}
@@ -153,17 +187,49 @@ namespace PurrfectIntelligence {
 		return oneHot;
 	}
 
+	std::vector<Data> Data::LoadCsv(const char* filepath, uint32_t imageCount, uint32_t width, uint32_t height, uint32_t labelCount) {
+		FILE* fp;
+		std::vector<Data> images(imageCount);
+		char row[MAXCHAR];
+		fp = fopen(filepath, "r");
+
+		// Read the first line 
+		fgets(row, MAXCHAR, fp);
+		int i = 0;
+		while (feof(fp) != 1 && i < imageCount) {
+			int j = 0;
+			fgets(row, MAXCHAR, fp);
+			char* token = strtok(row, ",");
+			
+			uint32_t label = 0;
+			std::vector<double> imageData(width * height);
+			
+			while (token != NULL) {
+				if (j == 0) {
+					label = (uint32_t) atoi(token);
+				}
+				else {
+					imageData[(j - 1) / width * width + (j - 1) % height] = atoi(token) / 256.0;
+				}
+				token = strtok(NULL, ",");
+				j++;
+			}
+			
+			images[i] = Data(imageData, label, labelCount);
+
+			i++;
+		}
+		fclose(fp);
+		return images;
+	}
+
 	NeuralNetowrk::NeuralNetowrk(NeuralNetworkArchitecture arch, ActivationFunc activation, ActivationDerivativeFunc activationD, CostFunc cost, CostDerivativeFunc costD)
 		: m_Arch(arch), m_Activation(activation), m_ActivationDerivative(activationD), m_Cost(cost), m_CostDerivative(costD) {
-		m_Layers.resize(arch.hiddenLayersNeurons.size() + 1);
-		for (uint32_t i = 0; i < m_Layers.size(); ++i) {
-			uint32_t inputs = 0;
-			if (i == 0) inputs = arch.inputLayerNeurons;
-			else if (i == m_Layers.size() - 1) inputs = arch.outputLayerNeurons;
-			else inputs = arch.hiddenLayersNeurons[i-1];
+		m_Layers.resize(arch.hiddenLayersNeurons.size()+1);
+		for (uint32_t i = 0; i < arch.hiddenLayersNeurons.size()+1; ++i) {
 			LayerArchitecture layerArch{};
-			layerArch.neuronsIn = inputs;
-			layerArch.neuronsOut = i < m_Layers.size() ? arch.hiddenLayersNeurons[i] : arch.outputLayerNeurons;
+			layerArch.neuronsIn = m_Arch[i];
+			layerArch.neuronsOut = m_Arch[i+1];
 
 			m_Layers[i] = std::make_unique<Layer>(layerArch, activation);
 		}
@@ -181,32 +247,72 @@ namespace PurrfectIntelligence {
 				m_BatchLearnData[i] = NetworkLearnData(m_Layers);
 		}
 
-		std::for_each(std::execution::par, data.begin(), data.end(), [this](Data data, uint32_t i) {
-			printf("Train no. %zu.", i);
+		uint32_t i = 0;
+		std::for_each(/*std::execution::par, */data.begin(), data.end(), [this, &i](Data data) {
+			printf("Train no. %zu.\n", i);
+
 			std::vector<double> input = data.GetData();
-			for (auto& layer : m_Layers) {
-				input = layer->Forward(input);
+			{
+				uint32_t j = 0;
+				for (auto& layer : m_Layers) {
+					input = layer->Forward(input, m_BatchLearnData[i].layerData[j]);
+					++j;
+				}
 			}
 
-			auto &outputLayer = m_Layers[m_Layers.size() - 1];
-			LayerLearnData outputLearnData = m_BatchLearnData[i].layerData[m_Layers.size() - 1];
+			uint32_t outputLayerIndex = m_Layers.size() - 1;
+			auto &outputLayer = m_Layers[outputLayerIndex];
+			LayerLearnData outputLearnData = m_BatchLearnData[i].layerData[outputLayerIndex];
 
 			outputLayer->CalculateOutputLayerNodeValues(outputLearnData, data.GetExpectedOutputs(), m_Cost);
 			outputLayer->UpdateGradients(outputLearnData);
 
-			for (int j = m_Layers.size() - 2; j >= 0; j--)
+			for (uint32_t j = outputLayerIndex - 1; j >= 0; j--)
 			{
+				if (j < 4294967295) break;
 				LayerLearnData layerLearnData = m_BatchLearnData[i].layerData[j];
 				auto &hiddenLayer = m_Layers[j];
 
-				auto &temp = m_Layers[j + 1];
-				hiddenLayer->CalculateHiddenLayerNodeValues(layerLearnData, temp, m_BatchLearnData[i].layerData[j + 1].nodeValues);
+				hiddenLayer->CalculateHiddenLayerNodeValues(layerLearnData, m_Layers[j + 1], m_BatchLearnData[i].layerData[j + 1].nodeValues);
 				hiddenLayer->UpdateGradients(layerLearnData);
 			}
+
+			++i;
 		});
 
 		for (auto& layer : m_Layers)
 			layer->ApplyGradients(learnRate / data.size(), regularization, momentum);
+	}
+
+	uint32_t MaxValueIndex(std::vector<double> values)
+	{
+		double maxValue = -DBL_MAX;
+		int index = 0;
+		for (int i = 0; i < values.size(); i++)
+		{
+			if (values[i] > maxValue)
+			{
+				maxValue = values[i];
+				index = i;
+			}
+		}
+
+		return index;
+	}
+
+	std::pair<uint32_t, std::vector<double>> NeuralNetowrk::Classify(Data data) {
+		auto outputs = CalculateOutputs(data.GetData());
+		uint32_t predictedClass = MaxValueIndex(outputs);
+		return std::make_pair(predictedClass, outputs);
+	}
+
+	std::vector<double> NeuralNetowrk::CalculateOutputs(std::vector<double> input) {
+		std::vector<double> result = input;
+
+		for (auto& layer : m_Layers)
+			result = layer->CalculateOutputs(result);
+
+		return result;
 	}
 
 }
