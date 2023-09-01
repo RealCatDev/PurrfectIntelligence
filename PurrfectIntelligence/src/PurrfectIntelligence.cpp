@@ -2,6 +2,10 @@
 
 #include <assert.h>
 
+#include <string>
+#include <sstream>
+#include <fstream>
+
 namespace PurrfectIntelligence {
 
 	Layer::Layer(LayerArchitecture arch) 
@@ -27,6 +31,74 @@ namespace PurrfectIntelligence {
 		return m_Activation;
 	}
 
+	NeuralNetwork* NeuralNetwork::Load(const char* filepath) {
+		std::ifstream file(filepath);
+		assert(file.is_open() && "Failed to load neural network.");
+
+		NNArchitecture arch{};
+
+		std::string buf;
+		std::getline(file, buf);
+		arch.arch.resize(std::stoi(buf));
+		for (size_t i = 0; i < arch.arch.size(); ++i) {
+			std::getline(file, buf);
+			arch.arch[i] = std::stoi(buf);
+		}
+
+		NeuralNetwork* nn = new NeuralNetwork(arch);
+
+		for (size_t i = 0; i < arch.arch.size()-1; ++i) {
+			for (size_t j = 0; j < 2; j++) {
+				std::getline(file, buf);
+				char type = buf.at(0);
+				Math::Matrix* mat;
+
+				int rows = 1;
+				int cols = 1;
+
+				switch (type) {
+
+				case 'w': {
+					std::getline(file, buf);
+					rows = std::stoi(buf);
+					std::getline(file, buf);
+					cols = std::stoi(buf);
+					mat = new Math::Matrix(rows, cols);
+				} break;
+
+				case 'b': {
+					std::getline(file, buf);
+					cols = std::stoi(buf);
+					mat = new Math::Matrix(1, cols);
+				} break;
+
+				default:
+					printf("File not valid!");
+					return nullptr;
+				}
+
+				for (size_t y = 0; y < cols; ++y) {
+					std::getline(file, buf);
+					std::istringstream iss(buf);
+					for (size_t x = 0; x < rows; ++x) {
+						float value;
+						if (!(iss >> value)) {
+							throw std::runtime_error("Invalid input string");
+						}
+						mat->Get(x, y) = value;
+					}
+				}
+
+				if (type == 'w')
+					nn->m_Layers[i]->m_Weights = mat;
+				else if (type == 'b')
+					nn->m_Layers[i]->m_Biases = mat;
+			}
+		}
+
+		return nn;
+	}
+
 	NeuralNetwork::NeuralNetwork(NNArchitecture arch, bool isGradient) 
 		: m_Arch(arch) {
 		m_Layers.resize(arch.arch.size() - 1);
@@ -38,6 +110,23 @@ namespace PurrfectIntelligence {
 
 	NeuralNetwork::~NeuralNetwork() {
 		delete m_Activation;
+	}
+
+	void NeuralNetwork::Save(const char* filepath) {
+		std::ofstream file(filepath);
+		
+		file << m_Arch.arch.size() << std::endl;
+		for (size_t i = 0; i < m_Arch.arch.size(); ++i)
+			file << m_Arch.arch[i] << std::endl;
+
+		for (size_t i = 0; i < m_Arch.arch.size()-1; ++i) {
+			file << "w" << std::endl << m_Layers[i]->m_Weights->GetRows() << std::endl << m_Layers[i]->m_Weights->GetCols() << std::endl;
+			file << m_Layers[i]->m_Weights->ToString();
+			file << "b" << std::endl << m_Layers[i]->m_Weights->GetCols() << std::endl;
+			file << m_Layers[i]->m_Biases->ToString();
+		}
+
+		file.close();
 	}
 
 	void NeuralNetwork::Print() {

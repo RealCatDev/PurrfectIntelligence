@@ -2,6 +2,7 @@
 
 #include <random>
 #include <assert.h>
+#include <sstream>
 
 namespace PurrfectIntelligence {
 
@@ -111,6 +112,16 @@ namespace PurrfectIntelligence {
 					}
 				}
 			}
+		}
+
+		std::string Matrix::ToString() {
+			std::stringstream ss;
+			for (size_t y = 0; y < m_Cols; ++y) {
+				for (size_t x = 0; x < m_Rows; ++x)
+					ss << Get(x, y) << " ";
+				ss << std::endl;
+			}
+			return ss.str();
 		}
 
 	}

@@ -45,8 +45,12 @@ namespace PurrfectIntelligence {
 
 	public:
 
+		static NeuralNetwork* Load(const char *file);
+
 		NeuralNetwork(NNArchitecture arch, bool = false);
 		~NeuralNetwork();
+
+		void Save(const char* file);
 
 		void Print();
 

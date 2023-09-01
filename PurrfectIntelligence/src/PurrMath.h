@@ -42,6 +42,8 @@ namespace PurrfectIntelligence {
 
 			inline void SetData(MatrixType* data) { m_Es = data; }
 
+			std::string ToString();
+
 		private:
 
 			size_t m_Rows;
