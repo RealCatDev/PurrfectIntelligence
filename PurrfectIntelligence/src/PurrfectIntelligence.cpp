@@ -1,318 +1,221 @@
 #include "PurrfectIntelligence.h"
 
-#define MAXCHAR 10000
-
-#define _USE_MATH_DEFINES
-#include <math.h>
-
-#include <algorithm>
-#include <execution>
-
-#include <random>
+#include <assert.h>
 
 namespace PurrfectIntelligence {
 
-	double NormalDistribution(double mean, double standardDeviation) {
-		std::random_device rd;
-		std::mt19937 gen(rd());
-		std::normal_distribution<double> distribution(mean, standardDeviation);
-		return distribution(gen);
-	}
+	Layer::Layer(LayerArchitecture arch) 
+		: m_NeuronsIn(arch.inNeurons), m_NeuronsOut(arch.outNeurons) {
+		m_Weights = new Math::Matrix(m_NeuronsIn, m_NeuronsOut);
+		m_Biases = new Math::Matrix(1, m_NeuronsOut);
+		m_Activation = new Math::Matrix(1, m_NeuronsOut);
 
-	Layer::Layer()
-		: m_Arch(), m_Activation(), m_ActivationDerivative(), m_Cost(), m_CostDerivative(), m_Weights(), m_Biases(), m_CostGradientW(), m_CostGradientB(), m_WeightVelocities(), m_BiasVelocities() {
-	}
-
-	Layer::Layer(LayerArchitecture arch, ActivationFunc activation, ActivationDerivativeFunc activationD, CostFunc cost, CostDerivativeFunc costD)
-		: m_Arch(arch), m_Activation(activation), m_ActivationDerivative(activationD), m_Cost(cost), m_CostDerivative(costD), m_Weights(arch.neuronsIn* arch.neuronsOut), m_Biases(arch.neuronsOut), m_CostGradientW(m_Weights.size()), m_CostGradientB(m_Biases.size()), m_WeightVelocities(m_Weights.size()), m_BiasVelocities(m_Biases.size()) {
-		for (uint32_t i = 0; i < m_Weights.size(); ++i)
-			m_Weights[i] = NormalDistribution(0, 1) / sqrt(arch.neuronsOut);
+		m_Weights->Random(-1, 1);
+		m_Biases->Random(-1, 1);
 	}
 
 	Layer::~Layer() {
-
+		delete m_Weights;
+		delete m_Biases;
 	}
 
-	std::vector<double> Layer::Forward(std::vector<double> inputs) {
-		std::vector<double> activations(m_Arch.neuronsOut);
+	Math::Matrix* Layer::Forward(Math::Matrix* input) {
+		m_Activation->Dot(input, m_Weights);
+		m_Activation->Sum(m_Biases);
+		m_Activation->ApplySigmoid();
 
-		for (uint32_t i = 0; i < m_Arch.neuronsOut; ++i) {
-			double weightedSum = m_Biases[i];
-			for (int j = 0; j < m_Weights[i]; ++j) {
-				weightedSum += m_Weights[i * m_Arch.neuronsIn + j] * inputs[j];
-			}
-			activations[i] = m_Activation(weightedSum);
+		return m_Activation;
+	}
+
+	NeuralNetwork::NeuralNetwork(NNArchitecture arch, bool isGradient) 
+		: m_Arch(arch) {
+		m_Layers.resize(arch.arch.size() - 1);
+		for (size_t i = 0; i < m_Layers.size(); ++i)
+			m_Layers[i] = std::make_unique<Layer>(LayerArchitecture(arch.arch[i], arch.arch[i+1]));
+		m_Activation = new Math::Matrix(1, arch.arch[0]);
+		if (!isGradient) m_Gradient = new NeuralNetwork(arch, true);
+	}
+
+	NeuralNetwork::~NeuralNetwork() {
+		delete m_Activation;
+	}
+
+	void NeuralNetwork::Print() {
+		printf("NeuralNetwork: {\n");
+		for (size_t i = 0; i < m_Layers.size(); ++i) {
+			auto& layer = m_Layers[i];
+			printf("    Layer no. %zu: [\n", i + 1);
+			layer->m_Weights->Print("Weights", 4 * 2);
+			layer->m_Biases->Print("Biases", 4*2);
+			printf("    ]\n");
 		}
-
-		return activations;
+		printf("]\n");
 	}
 
-	std::vector<double> Layer::Forward(std::vector<double> inputs, LayerLearnData &learnData) {
-		learnData.inputs = inputs;
+	void NeuralNetwork::TrainBathes(Batch* batch, size_t batchSize, Math::Matrix* td, float rate) {
+		//if (batch->finished) {
+		//	batch->finished = false;
+		//	batch->begin = 0;
+		//	batch->cost = 0;
+		//}
 
-		for (uint32_t i = 0; i < m_Arch.neuronsOut; ++i) {
-			double weightedSum = m_Biases[i];
-			for (int j = 0; j < m_Arch.neuronsIn; ++j) {
-				weightedSum += m_Weights[i * m_Arch.neuronsIn + j] * inputs[j];
-			}
-			learnData.weightedInputs[i] = weightedSum;
-		}
+		//size_t size = batchSize;
+		//if (batch->begin + batchSize >= td->GetRows()) {
+		//	size = td->GetRows() - batch->begin;
+		//}
 
-		for (uint32_t i = 0; i < learnData.activations.size(); ++i)
-			learnData.activations[i] = m_Activation(learnData.weightedInputs[i]);
+		//// TODO: introduce similar to row_slice operation but for Mat that will give you subsequence of rows
+		//Math::Matrix *batch_t = new Math::Matrix(size, td->GetCols());
+		//batch_t->SetData(&td->Get(batch->begin, 0));
 
-		return learnData.activations;
+		//Backprop(rate, batch_t);
+		////m_Gradient->Learn(rate);
+		//batch->cost += Cost(batch_t);
+		//batch->begin += batchSize;
+
+		//if (batch->begin >= td->GetRows()) {
+		//	size_t batch_count = (td->GetRows() + batchSize - 1) / batchSize;
+		//	batch->cost /= batch_count;
+		//	batch->finished = true;
+		//}
 	}
 
-	void Layer::ApplyGradients(double learnRate, double regularization, double momentum)
-	{
-		double weightDecay = (1 - regularization * learnRate);
-
-		for (uint32_t i = 0; i < m_Weights.size(); i++)
-		{
-			double weight = m_Weights[i];
-			double velocity = m_WeightVelocities[i] * momentum - m_CostGradientW[i] * learnRate;
-			m_WeightVelocities[i] = velocity;
-			m_Weights[i] = weight * weightDecay + velocity;
-			m_CostGradientW[i] = 0;
-		}
-
-
-		for (int i = 0; i < m_Biases.size(); i++)
-		{
-			double velocity = m_BiasVelocities[i] * momentum - m_CostGradientB[i] * learnRate;
-			m_BiasVelocities[i] = velocity;
-			m_Biases[i] += velocity;
-			m_CostGradientB[i] = 0;
-		}
-	}
-
-	void Layer::CalculateOutputLayerNodeValues(LayerLearnData &layerLearnData, std::vector<double> expectedOutputs, CostFunc cost)
-	{
-		for (int i = 0; i < layerLearnData.nodeValues.size(); i++)
-		{
-			// Evaluate partial derivatives for current node: cost/activation & activation/weightedInput
-			double costDerivative = m_CostDerivative(layerLearnData.activations[i], expectedOutputs[i]);
-			double activationDerivative = m_ActivationDerivative(layerLearnData.weightedInputs[i]);
-			layerLearnData.nodeValues[i] = costDerivative * activationDerivative;
-		}
-	}
-
-	void Layer::CalculateHiddenLayerNodeValues(LayerLearnData &layerLearnData, std::unique_ptr<Layer> &oldLayer, std::vector<double> oldNodeValues)
-	{
-		for (int newNodeIndex = 0; newNodeIndex < m_Arch.neuronsOut; newNodeIndex++)
-		{
-			double newNodeValue = 0;
-			for (int oldNodeIndex = 0; oldNodeIndex < oldNodeValues.size(); oldNodeIndex++)
-			{
-				// Partial derivative of the weighted input with respect to the input
-				double weightedInputDerivative = oldLayer->m_Weights[oldNodeIndex * oldLayer->m_Arch.neuronsIn + newNodeIndex];
-				newNodeValue += weightedInputDerivative * oldNodeValues[oldNodeIndex];
-			}
-			newNodeValue *= m_ActivationDerivative(layerLearnData.weightedInputs[newNodeIndex]);
-			layerLearnData.nodeValues[newNodeIndex] = newNodeValue;
-		}
-
-	}
-
-	void Layer::UpdateGradients(LayerLearnData &layerLearnData)
-	{
-		std::thread weight(
-			[this, layerLearnData]() {
-				for (int nodeOut = 0; nodeOut < m_Arch.neuronsOut; nodeOut++)
-				{
-					double nodeValue = layerLearnData.nodeValues[nodeOut];
-					for (int nodeIn = 0; nodeIn < m_Arch.neuronsIn; nodeIn++)
-					{
-						double derivativeCostWrtWeight = layerLearnData.inputs[nodeIn] * nodeValue;
-						m_CostGradientW[nodeOut * m_Arch.neuronsIn + nodeIn] += derivativeCostWrtWeight;
-					}
-				}
-			}
-		);
-
-		std::thread bias(
-			[this, layerLearnData]() {
-				for (int nodeOut = 0; nodeOut < m_Arch.neuronsOut; nodeOut++) {
-					double derivativeCostWrtBias = 1 * layerLearnData.nodeValues[nodeOut];
-					m_CostGradientB[nodeOut] += derivativeCostWrtBias;
-				}
-			}
-		);
-
-		weight.join();
-		bias.join();
-	}
-
-	std::vector<double> Layer::CalculateOutputs(std::vector<double> input) {
-		std::vector<double> weightedInputs(m_Arch.neuronsOut);
-
-		for (int nodeOut = 0; nodeOut < m_Arch.neuronsOut; nodeOut++)
-		{
-			double weightedInput = m_Biases[nodeOut];
-
-			for (int nodeIn = 0; nodeIn < m_Arch.neuronsIn; nodeIn++)
-			{
-				weightedInput += input[nodeIn] * m_Weights[nodeOut * m_Arch.neuronsIn + nodeIn];
-			}
-			weightedInputs[nodeOut] = weightedInput;
-		}
-
-		// Apply activation function
-		std::vector<double> activations(m_Arch.neuronsOut);
-		for (int outputNode = 0; outputNode < m_Arch.neuronsOut; outputNode++)
-		{
-			activations[outputNode] = m_Activation(weightedInputs[outputNode]);
-		}
-
-		return activations;
-	}
-
-	Data::Data()
-		: m_Data(), m_Label(), m_ExpectedOutputs() {
-	}
-
-	Data::Data(std::vector<double> data, uint32_t label, uint32_t labelCount)
-		: m_Data(data), m_Label(label), m_ExpectedOutputs(CreateOneHot(label, labelCount)) {
-	}
-
-	Data::~Data() {
-
-	}
-
-	std::vector<double> Data::CreateOneHot(uint32_t index, uint32_t size) {
-		std::vector<double> oneHot = std::vector<double>(size);
-		for (uint32_t i = 0; i < size; ++i)
-			oneHot[i] = i == index ? 1.0 : 0.0;
-		return oneHot;
-	}
-
-	std::vector<Data> Data::LoadCsv(const char* filepath, uint32_t imageCount, uint32_t width, uint32_t height, uint32_t labelCount) {
-		FILE* fp;
-		std::vector<Data> images(imageCount);
-		char row[MAXCHAR];
-		fp = fopen(filepath, "r");
-
-		// Read the first line 
-		fgets(row, MAXCHAR, fp);
-		int i = 0;
-		while (feof(fp) != 1 && i < imageCount) {
-			int j = 0;
-			fgets(row, MAXCHAR, fp);
-			char* token = strtok(row, ",");
-			
-			uint32_t label = 0;
-			std::vector<double> imageData(width * height);
-			
-			while (token != NULL) {
-				if (j == 0) {
-					label = (uint32_t) atoi(token);
-				}
-				else {
-					imageData[(j - 1) / width * width + (j - 1) % height] = atoi(token) / 256.0;
-				}
-				token = strtok(NULL, ",");
-				j++;
-			}
-			
-			images[i] = Data(imageData, label, labelCount);
-
-			i++;
-		}
-		fclose(fp);
-		return images;
-	}
-
-	NeuralNetowrk::NeuralNetowrk(NeuralNetworkArchitecture arch, ActivationFunc activation, ActivationDerivativeFunc activationD, CostFunc cost, CostDerivativeFunc costD)
-		: m_Arch(arch), m_Activation(activation), m_ActivationDerivative(activationD), m_Cost(cost), m_CostDerivative(costD) {
-		m_Layers.resize(arch.hiddenLayersNeurons.size()+1);
-		for (uint32_t i = 0; i < arch.hiddenLayersNeurons.size()+1; ++i) {
-			LayerArchitecture layerArch{};
-			layerArch.neuronsIn = m_Arch[i];
-			layerArch.neuronsOut = m_Arch[i+1];
-
-			m_Layers[i] = std::make_unique<Layer>(layerArch, activation);
-		}
-	}
-
-	NeuralNetowrk::~NeuralNetowrk() {
-
-	}
-
-	void NeuralNetowrk::Train(std::vector<Data> data, double learnRate, double regularization, double momentum) {
-		if (m_BatchLearnData.empty() || m_BatchLearnData.size() != data.size()) {
-			if (!m_BatchLearnData.empty()) m_BatchLearnData.clear();
-			m_BatchLearnData.resize(data.size());
-			for (uint32_t i = 0; i < data.size(); ++i)
-				m_BatchLearnData[i] = NetworkLearnData(m_Layers);
-		}
-
-		uint32_t i = 0;
-		std::for_each(/*std::execution::par, */data.begin(), data.end(), [this, &i](Data data) {
-			printf("Train no. %zu.\n", i);
-
-			std::vector<double> input = data.GetData();
-			{
-				uint32_t j = 0;
-				for (auto& layer : m_Layers) {
-					input = layer->Forward(input, m_BatchLearnData[i].layerData[j]);
-					++j;
-				}
-			}
-
-			uint32_t outputLayerIndex = m_Layers.size() - 1;
-			auto &outputLayer = m_Layers[outputLayerIndex];
-			LayerLearnData outputLearnData = m_BatchLearnData[i].layerData[outputLayerIndex];
-
-			outputLayer->CalculateOutputLayerNodeValues(outputLearnData, data.GetExpectedOutputs(), m_Cost);
-			outputLayer->UpdateGradients(outputLearnData);
-
-			for (uint32_t j = outputLayerIndex - 1; j >= 0; j--)
-			{
-				if (j < 4294967295) break;
-				LayerLearnData layerLearnData = m_BatchLearnData[i].layerData[j];
-				auto &hiddenLayer = m_Layers[j];
-
-				hiddenLayer->CalculateHiddenLayerNodeValues(layerLearnData, m_Layers[j + 1], m_BatchLearnData[i].layerData[j + 1].nodeValues);
-				hiddenLayer->UpdateGradients(layerLearnData);
-			}
-
-			++i;
-		});
-
+	void NeuralNetwork::Forward() {
+		Math::Matrix* input = m_Activation;
 		for (auto& layer : m_Layers)
-			layer->ApplyGradients(learnRate / data.size(), regularization, momentum);
+			input = layer->Forward(input);
 	}
 
-	uint32_t MaxValueIndex(std::vector<double> values)
-	{
-		double maxValue = -DBL_MAX;
-		int index = 0;
-		for (int i = 0; i < values.size(); i++)
-		{
-			if (values[i] > maxValue)
-			{
-				maxValue = values[i];
-				index = i;
+	float NeuralNetwork::Cost(Math::Matrix* td) {
+		assert(Input().GetCols() + Output().GetCols() == td->GetCols());
+		size_t n = td->GetRows();
+
+		float c = 0;
+		for (size_t i = 0; i < n; ++i) {
+			Math::Matrix* row = td->GetRow(i);
+			Math::Matrix* x = new Math::Matrix(1, Input().GetCols());
+			x->SetData(&row->Get(0, 0));
+			Math::Matrix* y = new Math::Matrix(1, Output().GetCols());
+			y->SetData(&row->Get(0, Input().GetCols()));
+
+			Input().Copy(x);
+			Forward();
+
+			size_t q = y->GetCols();
+			for (size_t j = 0; j < q; ++j) {
+				float d = Output().Get(0, j) - y->Get(0, j);
+				c += d * d;
 			}
 		}
 
-		return index;
+		return c / n;
 	}
 
-	std::pair<uint32_t, std::vector<double>> NeuralNetowrk::Classify(Data data) {
-		auto outputs = CalculateOutputs(data.GetData());
-		uint32_t predictedClass = MaxValueIndex(outputs);
-		return std::make_pair(predictedClass, outputs);
+	void NeuralNetwork::FiniteDiff(float eps, Math::Matrix* td) {
+		float saved;
+		float c = Cost(td);
+		for (size_t i = 0; i < m_Layers.size(); ++i) {
+			for (size_t j = 0; j < m_Layers[i]->m_Weights->GetRows(); ++j) {
+				for (size_t k = 0; k < m_Layers[i]->m_Weights->GetCols(); ++k) {
+					saved = m_Layers[i]->m_Weights->Get(j, k);
+					m_Layers[i]->m_Weights->Get(j, k) += eps;
+					m_Gradient->m_Layers[i]->m_Weights->Get(j, k) = (Cost(td) - c) / eps;
+					m_Layers[i]->m_Weights->Get(j, k) = saved;
+				}
+			}
+
+			for (size_t k = 0; k < m_Layers[i]->m_Biases->GetCols(); ++k) {
+				saved = m_Layers[i]->m_Biases->Get(0, k);
+				m_Layers[i]->m_Biases->Get(0, k) += eps;
+				m_Gradient->m_Layers[i]->m_Biases->Get(0, k) = (Cost(td) - c) / eps;
+				m_Layers[i]->m_Biases->Get(0, k) = saved;
+			}
+		}
 	}
 
-	std::vector<double> NeuralNetowrk::CalculateOutputs(std::vector<double> input) {
-		std::vector<double> result = input;
+//	NeuralNetwork* NeuralNetwork::Backprop(float rate, Math::Matrix *td) {
+//		size_t n = td->GetRows();
+//		assert(m_Layers[0]->m_Activation->GetCols() + m_Layers[m_Layers.size()-1]->m_Activation->GetCols() == td->GetCols());
+//
+//		NeuralNetwork *g = new NeuralNetwork(m_Arch);
+//
+//		// i - current sample
+//		// l - current layer
+//		// j - current activation
+//		// k - previous activation
+//
+//		for (size_t i = 0; i < n; ++i) {
+//			Math::Matrix *row = td->GetRow(i);
+//			Math::Matrix* in = new Math::Matrix(1, m_Activation->GetCols());
+//			in->SetData(&row->Get(0, 0));
+//			Math::Matrix *out = new Math::Matrix(1, m_Layers[m_Layers.size()-1]->m_Activation->GetCols());
+//			in->SetData(&row->Get(0, m_Activation->GetCols()));
+//
+//			Forward();
+//
+//			for (size_t j = 0; j < m_Layers.size()+1; ++j) {
+//				auto mat = j == 0 ? m_Activation : m_Layers[j-1]->m_Activation;
+//				mat->Fill(0);
+//			}
+//
+//			for (size_t j = 0; j < out->GetCols(); ++j) {
+//#if 1
+//				g->m_Layers[m_Layers.size() - 1]->m_Activation->Get(0, j) = 2 * (m_Layers[m_Layers.size() - 1]->m_Activation->Get(0, j) - out->Get(0, j));
+//#else
+//				g->m_Layers[m_Layers.size() - 1]->m_Activation->Get(0, j) = m_Layers[m_Layers.size() - 1]->m_Activation->Get(0, j) - out->Get(0, j);
+//#endif // BACKPROP_TRADITIONAL
+//			}
+//
+//#if 1
+//			float s = 1;
+//#else
+//			float s = 2;
+//#endif // BACKPROP_TRADITIONAL
+//
+//			for (size_t l = m_Layers.size()-1; l > 0; --l) {
+//				for (size_t j = 0; j < m_Layers[l]->m_Activation->GetCols(); ++j) {
+//					float a = m_Layers[l]->m_Activation->Get(0, j);
+//					float da = g->m_Layers[l]->m_Activation->Get(0, j);
+//					float qa = a*(1-a);//dactf(a, NN_ACT);
+//					g->m_Layers[l - 1]->m_Biases->Get(0, j) += s * da * qa;
+//					for (size_t k = 0; k < m_Layers[l-1]->m_Activation->GetCols(); ++k) {
+//						// j - weight matrix col
+//						// k - weight matrix row
+//						float pa = m_Layers[l]->m_Activation->Get(0, k);
+//						float w = m_Layers[l]->m_Weights->Get(k, j);
+//						m_Layers[l]->m_Activation->Get(k, j) += s * da * qa * pa;
+//						m_Layers[l]->m_Weights->Get(0, k) += s * da * qa * w;
+//					}
+//				}
+//			}
+//		}
+//
+//		for (size_t i = 0; i < g->m_Layers.size(); ++i) {
+//			for (size_t j = 0; j < g->m_Layers[i]->m_Weights->GetRows(); ++j) {
+//				for (size_t k = 0; k < g->m_Layers[i]->m_Weights->GetCols(); ++k) {
+//					g->m_Layers[i]->m_Weights->Get(j, k) /= n;
+//				}
+//			}
+//			for (size_t k = 0; k < g->m_Layers[i]->m_Biases->GetCols(); ++k) {
+//				g->m_Layers[i]->m_Biases->Get(0, k) /= n;
+//			}
+//		}
+//
+//		return g;
+//	}
 
-		for (auto& layer : m_Layers)
-			result = layer->CalculateOutputs(result);
+	void NeuralNetwork::Learn(float rate) {
+		for (size_t i = 0; i < m_Layers.size(); ++i) {
+			for (size_t j = 0; j < m_Layers[i]->m_Weights->GetRows(); ++j) {
+				for (size_t k = 0; k < m_Layers[i]->m_Weights->GetCols(); ++k) {
+					m_Layers[i]->m_Weights->Get(j, k) -= rate * m_Gradient->m_Layers[i]->m_Weights->Get(j, k);
+				}
+			}
 
-		return result;
+			for (size_t k = 0; k < m_Layers[i]->m_Biases->GetCols(); ++k) {
+				m_Layers[i]->m_Biases->Get(0, k) -= rate * m_Gradient->m_Layers[i]->m_Biases->Get(0, k);
+			}
+		}
 	}
 
 }

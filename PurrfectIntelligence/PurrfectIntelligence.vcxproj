@@ -90,10 +90,12 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="src\PurrMath.h" />
     <ClInclude Include="src\PurrfectIntelligence.h" />
     <ClInclude Include="src\stb_image.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="src\PurrMath.cpp" />
     <ClCompile Include="src\PurrfectIntelligence.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
